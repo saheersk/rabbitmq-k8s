@@ -1,0 +1,151 @@
+version: "3.8"
+
+services:
+  postgres_order:
+    image: postgres:16
+    container_name: postgres_order_container
+    environment:
+      POSTGRES_DB: order_db
+      POSTGRES_USER: order_user
+      POSTGRES_PASSWORD: order_user123
+    volumes:
+      - postgres_order_data:/var/lib/postgresql/data
+
+  postgres_product:
+    image: postgres:16
+    container_name: postgres_product_container
+    environment:
+      POSTGRES_DB: product_db
+      POSTGRES_USER: product_user
+      POSTGRES_PASSWORD: product_user123
+    volumes:
+      - postgres_product_data:/var/lib/postgresql/data
+
+  postgres_authentication:
+    image: postgres:16
+    container_name: postgres_authentication_container
+    environment:
+      POSTGRES_DB: authentication_db
+      POSTGRES_USER: authentication_user
+      POSTGRES_PASSWORD: authentication_user123
+    volumes:
+      - postgres_authentication_data:/var/lib/postgresql/data
+
+  rabbitmq:
+    restart: always
+    image: "rabbitmq:3-management"
+    container_name: "rabbitmq_container"
+    ports:
+      - "5672:5672" 
+      - "15672:15672" 
+    environment:
+      RABBITMQ_DEFAULT_USER: "guest"
+      RABBITMQ_DEFAULT_PASS: "guest"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    depends_on:
+      - postgres_order
+      - postgres_authentication
+      - postgres_product
+
+  backend_authentication:
+    build:
+      context: ./backend/authentication
+      dockerfile: Dockerfile
+    image: backend:product-authentication
+    container_name: product-authentication
+    command: sh -c "chmod +x ./migrate.sh && chmod +x ./entrypoint.sh && sh ./migrate.sh && ./entrypoint.sh"
+    ports:
+      - 8000:8000
+    env_file:
+      - ./backend/authentication/.env
+    volumes:
+      - ./backend/authentication:/product-authentication
+    depends_on:
+      - postgres_authentication
+      - rabbitmq
+
+  backend_order:
+    build:
+      context: ./backend/order
+      dockerfile: Dockerfile
+    image: backend:product-order
+    container_name: product-order
+    command: sh -c "chmod +x ./migrate.sh && chmod +x ./entrypoint.sh && sh ./migrate.sh && ./entrypoint.sh"
+    ports:
+      - 8001:8000
+    env_file:
+      - ./backend/order/.env
+    volumes:
+      - ./backend/order:/product-order
+    depends_on:
+      - postgres_order
+      - rabbitmq
+  
+  backend_product:
+    build:
+      context: ./backend/product
+      dockerfile: Dockerfile
+    image: backend:product-product
+    container_name: product-product
+    command: sh -c "chmod +x ./migrate.sh && chmod +x ./entrypoint.sh && sh ./migrate.sh && ./entrypoint.sh"
+    ports:
+      - 8002:8000
+    env_file:
+      - ./backend/product/.env
+    volumes:
+      - ./backend/product/:/product-item
+    depends_on:
+      - postgres_product
+      - rabbitmq
+
+  celery_order:
+    restart: always
+    build: 
+      context: ./backend/order
+    env_file:
+      - ./backend/order/.env
+    volumes:
+      - ./backend/order:/product-order
+    container_name: celery_order
+    depends_on:
+      - rabbitmq
+      - backend_order
+      - postgres_order
+    command: celery -A order worker --loglevel=info
+
+  celery_authentication:
+    restart: always
+    build: 
+      context: ./backend/authentication
+    env_file:
+      - ./backend/authentication/.env
+    volumes:
+      - ./backend/authentication:/product-authentication
+    container_name: celery_authentication  # Change the container name
+    depends_on:
+      - rabbitmq
+      - backend_authentication
+      - postgres_authentication
+    command: celery -A authentication worker --loglevel=info  # Change the Celery app name
+
+  frontend:
+    container_name: frontend-product
+    build:
+      context: ./frontend/product
+      dockerfile: Dockerfile
+    image: frontend:frontend-product
+    ports:
+      - "5173:5173"
+    volumes:
+      - .:/frontend-product
+    depends_on:
+      - backend_authentication
+      - backend_order
+      - backend_product
+      
+volumes:
+  postgres_authentication_data:
+  postgres_order_data:
+  postgres_product_data:
+  rabbitmq_data:
